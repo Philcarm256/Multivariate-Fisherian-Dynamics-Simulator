@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Multivariate Fisherian Dynamics Simulator (8 traits) — with Presets</title>
+
+
+<!-- Load Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<!-- Export of last run (y & x) as CSV -->
+<script>
+(function setupExportOnce(){
+  function exportLastRunCSV() {
+    const data = window.lastRunData;
+    if (!data || !data.t || !data.y || !data.x) {
+      alert('No data from a previous run. Please click Simulate first.');
+      return;
+    }
+
+    const { t, y, x } = data;
+    const n = (y && y[0]) ? y[0].length : 0;
+
+    const header = [
+      't',
+      ...Array.from({length: n}, (_, i) => `y${i+1}`),
+      ...Array.from({length: n}, (_, i) => `x${i+1}`)
+    ];
+    const lines = [header.join(',')];
+
+    for (let i = 0; i < t.length; i++) {
+      const rowY = (y[i] || []).map(v => String(v));
+      const rowX = (x[i] || []).map(v => String(v));
+      lines.push([t[i], ...rowY, ...rowX].join(','));
+    }
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+
+    a.href = url;
+    a.download = `mfd_last_run_yx_${stamp}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function bind() {
+    const btn = document.getElementById('exportBtn');
+    if (btn && !btn.__exportBound) {
+      btn.addEventListener('click', exportLastRunCSV);
+      btn.__exportBound = true;
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bind, { once: true });
+  } else {
+    bind();
+  }
+})();
+</script>
+
+<style>
+  body { font-family: system-ui, Arial, sans-serif; margin: 20px; background: #ffffff; color:#222; }
+  h1 { margin: 0 0 6px; font-size: 20px; }
+  p { margin: 0 0 10px; }
+  .controls { display:grid; grid-template-columns: repeat(3, minmax(300px, 1fr)); gap: 12px 18px; margin: 14px 0 18px; }
+  .row { grid-column: 1 / -1; margin-top: 6px; }
+  label { display:flex; align-items:center; gap:8px; }
+  input[type="text"], input[type="number"] { width: 380px; max-width: 100%; padding: 5px 8px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  input[type="checkbox"] { transform: translateY(1px); }
+  button { padding: 6px 10px; border-radius: 8px; border: 1px solid #ccc; background: white; cursor: pointer; }
+  button:hover { background: #f1f1f1; }
+  #status { margin: 8px 0 12px; font-size: 13px; color:#444; }
+  .note { font-size: 12px; color:#555; margin-bottom: 10px; }
+  .preset-bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .preset-bar .title { font-weight: 600; margin-right: 6px; }
+  .preset-applied { font-size: 12px; color: #0a7; margin-left: 6px; }
+
+  /* Legend styles */
+  #symbol-legend-container {
+    margin: 16px auto;
+    max-width: 900px;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  #symbol-legend-toggle {
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    background: #f5f5f5;
+    cursor: pointer;
+    font-size: 0.9rem;
+  }
+  #symbol-legend-toggle:hover {
+    background: #e9e9e9;
+  }
+  #symbol-legend-panel {
+    margin-top: 8px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid #ddd;
+    background: #fafafa;
+    font-size: 0.9rem;
+  }
+  #symbol-legend-panel.hidden {
+    display: none;
+  }
+  #symbol-legend-panel h2 {
+    margin-top: 0;
+    margin-bottom: 4px;
+    font-size: 1rem;
+  }
+  #symbol-legend-panel .legend-note {
+    margin-top: 0;
+    margin-bottom: 10px;
+    color: #555;
+  }
+  #symbol-legend-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+  #symbol-legend-table th,
+  #symbol-legend-table td {
+    padding: 4px 6px;
+    vertical-align: top;
+    border-bottom: 1px solid #eee;
+  }
+  #symbol-legend-table th {
+    text-align: left;
+    font-weight: 600;
+  }
+  #symbol-legend-table code {
+    font-family: "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  }
+
+</style>
+</head>
+<body>
+  <h1>Multivariate Fisherian Dynamics Simulator — 8 traits</h1>
+  <p>
+    <br/>
+    β<sub>y</sub> = αx − 2Ω/(1−χ)&nbsp;·&nbsp;(Cy / R<sub>v</sub><sup>2</sup>), with χ = yᵀCy / R<sub>v</sub><sup>2</sup><br>
+    β<sub>x</sub> = ρy − kx − ψCy<br>
+    ẏ = G<sub>yy</sub> β<sub>y</sub> + G<sub>yx</sub> β<sub>x</sub> <br>
+    ẋ = G<sub>xy</sub> β<sub>y</sub> + G<sub>xx</sub> β<sub>x</sub> <br>
+  </p>
+  
+ 
+  
+  <!-- Symbol legend / help -->
+<div id="symbol-legend-container">
+  <button id="symbol-legend-toggle">Show symbol legend</button>
+
+  <div id="symbol-legend-panel" class="hidden">
+    <h2>Symbols used in the model</h2>
+    
+    <table id="symbol-legend-table">
+      <thead>
+        <tr>
+          <th>Symbol</th>
+          <th>Meaning</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>y</code></td>
+          <td>Vector of trait elaborations (one component per sexual trait).</td>
+        </tr>
+        <tr>
+          <td><code>x</code></td>
+          <td>Vector of preference magnitudes (one component per preference axis).</td>
+        </tr>
+        <tr>
+          <td><code>α</code></td>
+          <td>Alpha: sensitivity of traits to changes in preference (scales the trait-selection gradient in <code>βᵧ</code>).</td>
+        </tr>
+        <tr>
+          <td><code>ρ</code></td>
+          <td>Rho: sensitivity of preference to changes in traits (scales the feedback term in <code>βₓ</code>).</td>
+        </tr>
+        <tr>
+          <td><code>k</code></td>
+          <td>Cost of female choosiness; a damping coefficient that slows preference growth (appears in <code>βₓ</code>).</td>
+        </tr>
+        <tr>
+          <td><code>Ω</code></td>
+          <td>Omega: viability curvature constant; sets how steeply viability declines as total cost approaches the viability radius <code>Rᵥ²</code>.</td>
+        </tr>
+        <tr>
+          <td><code>ψ</code></td>
+          <td>
+            Psi: “evolved evaluation” coefficient coupling preference to the cost geometry defined by <code>C</code>. 
+            In the model it penalizes attraction to over-costly elaboration.
+          </td>
+        </tr>
+        <tr>
+          <td><code>Rᵥ²</code></td>
+          <td>Viability radius / energy budget. Total cost <code>yᵀCy</code> is constrained so that <code>yᵀCy ≤ Rᵥ²</code>.</td>
+        </tr>
+        <tr>
+          <td><code>C</code></td>
+          <td>Diagonal, positive-definite cost matrix; each diagonal entry sets the marginal viability cost of elaborating a given trait. 
+              In this simulator, off-diagonal (correlative) costs are excluded.</td>
+        </tr>
+        <tr>
+          <td><code>G</code></td>
+          <td>
+            Lande-style additive genetic variance–covariance matrix, containing 
+            <code>Gᵧᵧ</code> (trait–trait), <code>Gₓₓ</code> (preference–preference), 
+            and <code>Gᵧₓ = Gᵀₓᵧ</code> (trait–preference) components.
+            In this simulator, the full matrix is approximated using three user-defined scalar parameters, and assumes symmetric trait–preference covariance.
+          </td>
+        </tr>
+        <tr>
+          <td><code>βᵧ</code></td>
+          <td>Selection gradient on traits (gradient of fitness with respect to <code>y</code>).</td>
+        </tr>
+        <tr>
+          <td><code>βₓ</code></td>
+          <td>Selection gradient on preferences (gradient of fitness with respect to <code>x</code>).</td>
+        </tr>
+        <tr>
+          <td><code>χ</code></td>
+          <td>
+            Current proportion of the viability budget used: 
+            <code>χ = (yᵀCy) / Rᵥ²</code>. Values near 1 indicate the system is near the viability boundary.
+          </td>
+        </tr>
+        <tr>
+          <td><code>η</code></td>
+          <td>Initial randomization used to seed starting values of traits and preferences at <code>t = 0</code>.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+<div class="controls">
+    <div class="row"><strong>Parameters</strong></div>
+    <label>α: <input type="number" id="alpha" value="1.0" step="0.1"></label>
+    <label>ρ: <input type="number" id="rho" value="4.0" step="0.1"></label>
+    <label>k: <input type="number" id="k" value="1" step="0.05"></label>
+    <label>Ω: <input type="number" id="Omega" value="0.5" step="0.05"></label>
+    <label>ψ: <input type="number" id="psi" value="1.0" step="0.05"></label>
+
+    <div class="row"><strong>Trait costs (predation, metabolic, parasitic)</strong></div>
+    <label>C₁ (start): <input type="text" id="C1_arr" value="1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0"></label>
+    <label>C₂ (after S₁): <input type="text" id="C2_arr" value="1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0"></label>
+    <label>C₃ (after S₂): <input type="text" id="C3_arr" value="1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0"></label>
+    <label>C₄ (after S₃): <input type="text" id="C4_arr" value="1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0"></label>
+
+    <label>S₁ (switch step 1): <input type="number" id="switch1" value="600" step="50"></label>
+    <label>S₂ (switch step 2): <input type="number" id="switch2" value="1200" step="50"></label>
+    <label>S₃ (switch step 3): <input type="number" id="switch3" value="1600" step="50"></label>
+    <label>Ramp length (steps): <input type="number" id="rampLen" value="120" step="10"></label>
+
+    <div class="row"><strong>Resources over time</strong></div>
+    <label>Rᵥ² baseline: <input type="number" id="Rv2" value="9.0" step="0.1"></label>
+    <label>o (oscillator amplitude): <input type="number" id="osc" value="0.10" step="0.05"></label>
+    <label>Period (for Rᵥ²): <input type="number" id="period" value="400" step="20"></label>
+    <label>Steps (T): <input type="number" id="T" value="2000" step="100"></label>
+    <label>dt: <input type="number" id="dt" value="0.5" step="0.1"></label>
+
+    <div class="row"><strong>Genetic response (Lande G)</strong></div>
+    <label>G<sub>yy</sub>: <input type="number" id="Gyy" value="0.02" step="0.005"></label>
+    <label>G<sub>xx</sub>: <input type="number" id="Gxx" value="0.02" step="0.005"></label>
+    <label>G<sub>yx</sub>: <input type="number" id="Gyx" value="0.01" step="0.005"></label>
+
+    <div class="row"><strong>Initial randomness</strong></div>
+    <label>Init η<sub>y</sub>: <input type="number" id="random_y" value="0.05" step="0.01"></label>
+    <label>Init η<sub>x</sub>: <input type="number" id="random_x" value="0.05" step="0.01"></label>
+    <label>Seed (int): <input type="number" id="seed" value="12345" step="1"></label>
+    <label><input type="checkbox" id="useSeed"> Use seed</label>
+
+    <div class="row"><strong>Presets</strong></div>
+    <div class="row preset-bar">
+      <span class="title">Apply:</span>
+      <button class="preset" data-preset="Abundance">Abundance</button>
+      <button class="preset" data-preset="Indicator">Indicator</button>
+      <button class="preset" data-preset="Oscillating">Oscillating</button>
+      <button class="preset" data-preset="Exchanging">Exchanging</button>
+      <button class="preset" data-preset="Damping">Damping Cycles</button>
+      <button class="preset" data-preset="Unstable">Unstable</button>
+      <span id="presetApplied" class="preset-applied"></span>
+    </div>
+
+    <div class="row"><button id="runBtn">Simulate</button></div>
+  </div>
+
+  <div id="status">status: ready</div>
+  
+
+  <div id="initValues"></div>
+
+  <!-- Explicit width/height so charts don't shrink on reruns -->
+  <canvas id="traitsChart" width="1120" height="300"></canvas>
+  <canvas id="prefsChart" width="1120" height="300"></canvas>
+  <canvas id="budgetChart" width="1120" height="300"></canvas>
+  <canvas id="yCyChart" width="1120" height="300"></canvas>
+  <canvas id="rv2Chart" width="1120" height="300"></canvas>
+  <canvas id="allocChart" width="1120" height="300"></canvas>
+
+<script>
+// ======== helper UI ========
+function setStatus(s){ document.getElementById('status').textContent = 'status: ' + s; }
+function setVal(id, v){ const el = document.getElementById(id); if(!el) return; el.value = v; el.dispatchEvent(new Event('input', {bubbles:true})); }
+function setArr(id, arr){ setVal(id, Array.isArray(arr)? arr.join(', ') : arr); }
+
+// Apply a named preset to inputs
+function applyPreset(name){
+  const n = 8; // traits fixed in this build
+  // convenience arrays
+  const ones = Array(n).fill(1.0);
+  const low  = Array(n).fill(0.6);
+  const high = Array(n).fill(1.6);
+  const costs = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.95, 0.95];
+  const grow =  [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.75, 0.8];
+  const horns = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.85, 0.75];
+  const fangs = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.75, 0.85];
+
+  // clear tag
+  document.getElementById('presetApplied').textContent = '';
+
+  const P = {
+    Abundance(){
+      setVal('alpha', 1.0); setVal('rho', 4.0); setVal('k', 1.0); setVal('Omega', 0.5); setVal('psi', 0.7);
+      setArr('C1_arr', costs); setArr('C2_arr', costs); setArr('C3_arr', costs); setArr('C4_arr', costs);
+      setVal('switch1', 600); setVal('switch2', 1200); setVal('switch3', 1600); setVal('rampLen', 120);
+      setVal('dt', 0.5); setVal('Rv2', 9); setVal('osc', 0.0); setVal('period', 400); setVal('T', 2000);
+      setVal('Gyy', 0.02); setVal('Gxx', 0.02); setVal('Gyx', 0.01);
+      setVal('random_y', 0.05); setVal('random_x', 0.05); setVal('seed', 12345); document.getElementById('useSeed').checked = false;
+    },
+    Indicator(){
+      setVal('alpha', 1.0); setVal('rho', 4.0); setVal('k', 1.0); setVal('Omega', 0.5); setVal('psi', 3.0);
+      setArr('C1_arr', costs); setArr('C2_arr', costs); setArr('C3_arr', costs); setArr('C4_arr', costs);
+      setVal('switch1', 600); setVal('switch2', 1200); setVal('switch3', 1600); setVal('rampLen', 120);
+      setVal('dt', 0.5); setVal('Rv2', 9); setVal('osc', 0.0); setVal('period', 400); setVal('T', 2000);
+      setVal('Gyy', 0.02); setVal('Gxx', 0.02); setVal('Gyx', 0.01);
+      setVal('random_y', 0.05); setVal('random_x', 0.05); setVal('seed', 4242); document.getElementById('useSeed').checked = false;
+    },
+    Oscillating(){
+      setVal('alpha', 1); setVal('rho', 4.0); setVal('k', 1); setVal('Omega', 0.5); setVal('psi', 2);
+      setArr('C1_arr', costs); setArr('C2_arr', costs); setArr('C3_arr', costs); setArr('C4_arr', costs);
+      setVal('switch1', 600); setVal('switch2', 1200); setVal('switch3', 1600); setVal('rampLen', 120);
+      setVal('dt', 0.5); setVal('Rv2', 9.0); setVal('osc', 0.25); setVal('period', 400); setVal('T', 2000);
+      setVal('Gyy', 0.02); setVal('Gxx', 0.02); setVal('Gyx', 0.01);
+      setVal('random_y', 0.05); setVal('random_x', 0.05); setVal('seed', 9876); document.getElementById('useSeed').checked = false;
+    },
+    Exchanging(){
+      setVal('alpha', 1.0); setVal('rho', 4.0); setVal('k', 1.0); setVal('Omega', 0.5); setVal('psi', 2.5);
+      setArr('C1_arr', grow); setArr('C2_arr', horns); setArr('C3_arr', fangs); setArr('C4_arr', horns);
+      setVal('switch1', 600); setVal('switch2', 1200); setVal('switch3', 1600); setVal('rampLen', 120);
+      setVal('dt', 0.5); setVal('Rv2', 9.0); setVal('osc', 0); setVal('period', 400); setVal('T', 2000);
+      setVal('Gyy', 0.02); setVal('Gxx', 0.02); setVal('Gyx', 0.01);
+      setVal('random_y', 0.05); setVal('random_x', 0.05); setVal('seed', 2024); document.getElementById('useSeed').checked = false;
+   },
+    Damping(){
+      setVal('alpha', 1.0); setVal('rho', 4.0); setVal('k', 1.0); setVal('Omega', 0.5); setVal('psi', 0.8);
+      setArr('C1_arr', costs); setArr('C2_arr', costs); setArr('C3_arr', costs); setArr('C4_arr', costs);
+      setVal('switch1', 600); setVal('switch2', 1200); setVal('switch3', 1600); setVal('rampLen', 120);
+      setVal('dt', 0.5); setVal('Rv2', 9.0); setVal('osc', 0.7); setVal('period', 400); setVal('T', 2000);
+      setVal('Gyy', 0.02); setVal('Gxx', 0.02); setVal('Gyx', 0.01);
+      setVal('random_y', 0.05); setVal('random_x', 0.05); setVal('seed', 2024); document.getElementById('useSeed').checked = false;    
+  },
+    Unstable(){
+      setVal('alpha', 1.0); setVal('rho', 4.0); setVal('k', 1.0); setVal('Omega', 0.5); setVal('psi', 0);
+      setArr('C1_arr', costs); setArr('C2_arr', costs); setArr('C3_arr', costs); setArr('C4_arr', costs);
+      setVal('switch1', 600); setVal('switch2', 1200); setVal('switch3', 1600); setVal('rampLen', 120);
+      setVal('dt', 0.5); setVal('Rv2', 9.0); setVal('osc', 0.55); setVal('period', 400); setVal('T', 2000);
+      setVal('Gyy', 0.02); setVal('Gxx', 0.02); setVal('Gyx', 0.01);
+      setVal('random_y', 0.05); setVal('random_x', 0.05); setVal('seed', 2024); document.getElementById('useSeed').checked = false;    }
+  };
+
+  if(P[name]){ P[name](); document.getElementById('presetApplied').textContent = `Preset “${name}” applied.`; setStatus('preset applied'); }
+}
+
+// Wire up preset buttons
+addEventListener('click', (e)=>{
+  const btn = e.target.closest('button.preset');
+  if(btn){ applyPreset(btn.dataset.preset); }
+});
+
+// ======== core simulator (from original) ========
+function runSimulation(){
+  const yCy_series = [];
+
+  const histY = [];
+  const histX = [];
+
+  try {
+    setStatus('running…');
+
+    const n = 8;
+    const alpha = parseFloat(document.getElementById('alpha').value);
+    const rho   = parseFloat(document.getElementById('rho').value);
+    const k     = parseFloat(document.getElementById('k').value);
+    const Omega = parseFloat(document.getElementById('Omega').value);
+    const psi    = parseFloat(document.getElementById('psi').value);
+
+    // Costs & switches
+    const parseArr = (id)=> document.getElementById(id).value.split(',').map(s=>parseFloat(s.trim())).slice(0,n);
+    let C1 = parseArr('C1_arr'); let C2 = parseArr('C2_arr'); let C3 = parseArr('C3_arr'); let C4 = parseArr('C4_arr');
+    let S1 = parseInt(document.getElementById('switch1').value,10);
+    let S2 = parseInt(document.getElementById('switch2').value,10);
+    let S3 = parseInt(document.getElementById('switch3').value,10);
+    const rampLen = parseInt(document.getElementById('rampLen').value,10);
+
+    // Time / scale
+    const dt = parseFloat(document.getElementById('dt').value);
+    const R0 = parseFloat(document.getElementById('Rv2').value);
+    const o  = parseFloat(document.getElementById('osc').value);
+    const period = parseInt(document.getElementById('period').value,10);
+    const T  = parseInt(document.getElementById('T').value,10);
+
+    // Lande G
+    const Gyy = parseFloat(document.getElementById('Gyy').value);
+    const Gxx = parseFloat(document.getElementById('Gxx').value);
+    const Gyx = parseFloat(document.getElementById('Gyx').value);
+
+    // Initialization controls
+    const random_y = parseFloat(document.getElementById('random_y').value);
+    const random_x = parseFloat(document.getElementById('random_x').value);
+    const seedVal = parseInt(document.getElementById('seed').value, 10) || 0;
+    const useSeed = document.getElementById('useSeed').checked;
+    const rng = useSeed ? mulberry32(seedVal >>> 0) : Math.random;
+
+    // Ensure switches sorted
+    const S = [S1,S2,S3].sort((a,b)=>a-b); S1=S[0]; S2=S[1]; S3=S[2];
+
+    function Rv2_t(t){ return R0 * (1 + o * Math.sin(2 * Math.PI * t / period)); }
+
+    // Initial state (small randoms)
+    let y = Array.from({length:n}, () => random_y * (rng()*2 - 1) + random_y);
+    let x = Array.from({length:n}, () => random_x * (rng()*2 - 1) + random_x);
+
+    // Display init
+    const initBox = document.getElementById("initValues");
+initBox.innerHTML =
+  "Initial y: [" + y.map(v => v.toFixed(4)).join(", ") + "]<br>" +
+  "Initial x: [" + x.map(v => v.toFixed(4)).join(", ") + "]";
+
+    const ys = Array.from({length:T}, () => Array(n).fill(0));
+    const xs = Array.from({length:T}, () => Array(n).fill(0));
+    const chi_series = new Array(T).fill(0);
+
+    
+    const rv2_series = new Array(T).fill(0);
+// Smooth transitions for costs
+    function smoothStep (t, t0, t1){ if(t<=t0) return 0; if(t>=t1) return 1; const u=(t-t0)/(t1-t0); return u*u*(3-2*u); }
+    function interpolate(a,b,w){ return a.map((ai,i)=> ai*(1-w) + b[i]*w); }
+    function C_at(t){
+      const w1 = smoothStep(t, S1, S1+rampLen);
+      const w2 = smoothStep(t, S2, S2+rampLen);
+      const w3 = smoothStep(t, S3, S3+rampLen);
+      return interpolate(
+        interpolate(
+          interpolate(C1, C2, w1),
+          C3, w2
+        ),
+        C4, w3
+      );
+    }
+
+    // Simulation loop
+    function dot(a,b){ let s=0; for(let i=0;i<a.length;i++) s += a[i]*b[i]; return s; }
+    function bound(v){ return Math.max(0, v); }
+
+    for(let t=0; t<T; t++){
+// record y,x each step for export
+  histY.push([...y]);
+  histX.push([...x]);
+const C = C_at(t);
+      const Rv2 = Rv2_t(t);
+      const chi = dot(y.map((yi,i)=> yi*C[i]), y) / Rv2;
+      chi_series[t] = chi;
+
+      
+      
+      rv2_series[t] = Rv2;
+      yCy_series[t] = chi * Rv2;
+// selection gradients
+      const beta_y = y.map((_,i) => alpha*x[i] - (2*Omega/(1-chi)) * (C[i]*y[i]/Rv2) );
+      const beta_x = x.map((_,i) => rho*y[i] - k*x[i] - psi*C[i]*y[i]);
+
+      // Lande response
+      const dy = beta_y.map((b,i) => Gyy*b + Gyx*beta_x[i]);
+      const dx = beta_x.map((b,i) => Gxx*b + Gyx*beta_y[i]);
+
+      // Euler update + non-negativity
+      y = y.map((yi,i)=> bound( yi + dt*dy[i] ));
+      x = x.map((xi,i)=> bound( xi + dt*dx[i] ));
+
+      ys[t] = y.slice();
+      xs[t] = x.slice();
+    }
+
+    // ======== plots ========
+    const tAxis = Array.from({length:T}, (_,i)=>i);
+    const colors = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f'];
+    const makeDataset = (label, data, color) => ({ label, data, borderColor: color, fill:false, pointRadius:0, borderWidth:1.5 });
+
+    // clean up old charts if any
+    ['traitsChartInstance','prefsChartInstance','budgetChartInstance','allocChartInstance','yCyChartInstance','rv2ChartInstance'].forEach(k=>{ if(window[k]){ window[k].destroy(); window[k]=null; } });
+
+    if (window.Chart) {
+      const Y_AXIS_WIDTH = 56;
+      window.traitsChartInstance = new Chart(document.getElementById('traitsChart'), {
+        type: 'line',
+        data: { labels: tAxis, datasets: ys[0].map((_,i)=>makeDataset('y'+(i+1), ys.map(r=>r[i]), colors[i%colors.length])) },
+        options: {
+          responsive:false,
+          maintainAspectRatio:false,
+          plugins:{ title:{display:true, text:'Traits (y), n=8'} },
+          scales:{ x:{ title:{display:true,text:'time'} }, y:{ afterFit(scale){ scale.width = Y_AXIS_WIDTH; }, title:{display:true,text:'trait magnitude'}, ticks:{ callback: (v) => Number(v).toFixed(1) } } }
+        }
+      });
+
+      window.prefsChartInstance = new Chart(document.getElementById('prefsChart'), {
+        type: 'line',
+        data: { labels: tAxis, datasets: xs[0].map((_,i)=>makeDataset('x'+(i+1), xs.map(r=>r[i]), colors[i%colors.length])) },
+        options: {
+          responsive:false,
+          maintainAspectRatio:false,
+          plugins:{ title:{display:true, text:'Preferences (x), n=8'} },
+          scales:{ x:{ title:{display:true,text:'time'} }, y:{ afterFit(scale){ scale.width = Y_AXIS_WIDTH; }, title:{display:true,text:'preference magnitude'}, ticks:{ callback: (v) => Number(v).toFixed(1) } } }
+        }
+      });
+
+      window.budgetChartInstance = new Chart(document.getElementById('budgetChart'), {
+        type: 'line',
+        data: { labels: tAxis, datasets: [
+          makeDataset('χ = yᵀCy / Rᵥ²', chi_series, '#444'),
+          makeDataset('boundary (χ=1)', new Array(T).fill(1.0), '#bbb')
+        ]},
+        options: {
+          responsive:false,
+          maintainAspectRatio:false,
+          plugins:{ title:{display:true, text:'Budget χ(t)'} },
+          scales:{ x:{ title:{display:true,text:'time'} }, y:{ title:{display:true,text:'χ'} } }
+        }
+      });
+  
+// yCy over time chart
+if (window.yCyChartInstance) { try { window.yCyChartInstance.destroy(); } catch(e){} }
+window.yCyChartInstance = new Chart(document.getElementById('yCyChart'), {
+  type: 'line',
+  data: {
+    labels: tAxis,
+    datasets: [
+      makeDataset('y^T C y', yCy_series, '#2a7')
+    ]
+  },
+  options: {
+    responsive: false,
+    maintainAspectRatio: false,
+    plugins: { title: { display: true, text: 'Total cost yᵀ C y vs time' } },
+    scales: {
+      x: { title: { display: true, text: 'time' } },
+      y: { beginAtZero: true, title: { display: true, text: 'yᵀ C y' } }
+    }
+  }
+});
+
+// Rv^2 over time chart
+if (window.rv2ChartInstance) { try { window.rv2ChartInstance.destroy(); } catch(e){} }
+window.rv2ChartInstance = new Chart(document.getElementById('rv2Chart'), {
+  type: 'line',
+  data: {
+    labels: tAxis,
+    datasets: [
+      makeDataset('Rᵥ²', rv2_series, '#555')
+    ]
+  },
+  options: {
+    responsive: false,
+    maintainAspectRatio: false,
+    plugins: { title: { display: true, text: 'Rᵥ² vs time' } },
+    scales: {
+      x: { title: { display: true, text: 'time' } },
+      y: { beginAtZero: true, title: { display: true, text: 'Rᵥ²' } }
+    }
+  }
+});
+// Save last run data for export
+  window.lastRunData = { t: tAxis, y: histY, x: histX };
+  const eb = document.getElementById('exportBtn'); if (eb) eb.disabled = false;
+
+// Allocation across traits (proportion y_i / sum y)
+  const totalY = ys.map(row => row.reduce((a,b)=>a+b,0)+1e-12);
+  const alloc = ys.map((row,i)=> row.map(v => v/totalY[i]));
+  window.allocChartInstance = new Chart(document.getElementById('allocChart'), {
+    type: 'line',
+    data: { labels: tAxis, datasets: alloc[0].map((_,i)=>makeDataset('alloc y'+(i+1), alloc.map(r=>r[i]), colors[i%colors.length])) },
+    options: {
+      responsive:false,
+      plugins:{ title:{display:true, text:'Allocation across traits (yᵢ / Σy)'} },
+      scales:{ x:{ title:{display:true,text:'time'} }, y:{ min:0, max:1, title:{display:true,text:'proportion'} } }
+    }
+  });    
+}
+
+    setStatus('done');
+  } catch (e) {
+    setStatus("error: " + (e && e.message ? e.message : e));
+    console.error(e);
+    alert("Simulation error: " + e);
+  }
+}
+
+// RNG
+function mulberry32(a){
+  return function(){
+    var t = a += 0x6D2B79F5;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  }
+}
+
+// events
+document.getElementById('runBtn').addEventListener('click', runSimulation);
+document.getElementById('useSeed').checked = false; // default off
+setStatus('ready');
+</script>
+
+<div style="text-align:center; margin-top: 16px;">
+  <button id="exportBtn" disabled>Export y,x (CSV)</button>
+</div>
+
+</div>
+
+
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    var toggleButton = document.getElementById('symbol-legend-toggle');
+    var panel = document.getElementById('symbol-legend-panel');
+
+    if (!toggleButton || !panel) return;
+
+    toggleButton.addEventListener('click', function () {
+      var isHidden = panel.classList.contains('hidden');
+      if (isHidden) {
+        panel.classList.remove('hidden');
+        toggleButton.textContent = 'Hide symbol legend';
+      } else {
+        panel.classList.add('hidden');
+        toggleButton.textContent = 'Show symbol legend';
+      }
+    });
+  });
+</script>
+
+</body>
+</html>
